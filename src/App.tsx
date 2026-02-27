@@ -1,4 +1,7 @@
 import React, { useCallback, useRef, useState } from 'react';
+import ReactQuill from 'react-quill';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 type NeuroMetrics = {
   ef_capacity: 'high' | 'moderate' | 'low';
@@ -15,7 +18,14 @@ type ChatMessage = {
   content: string;
 };
 
-const API_BASE = '/api'; // proxied to http://localhost:8000 via vite.config.ts
+const API_BASE =
+  ((import.meta as any).env?.VITE_AI_BASE_URL as string | undefined)?.replace(/\/+$/, '') ||
+  'http://127.0.0.1:8000';
+
+function apiUrl(path: string): string {
+  const p = path.startsWith('/') ? path : `/${path}`;
+  return `${API_BASE}${p}`;
+}
 
 type MCQOption = {
   key: string;
@@ -49,6 +59,18 @@ type MicrotasksOutput = {
     pedagogical_reasoning?: string;
   };
   microtasks?: MicrotaskItem[];
+};
+
+type MicrotasksApiResponse = {
+  status?: string;
+  request_id?: string;
+  partner_id?: string | null;
+  course_id?: string;
+  assignment_id?: string;
+  llm_model?: string;
+  llm_cost?: number;
+  generated_at?: string;
+  microtasks_output?: MicrotasksOutput;
 };
 
 function authHeader(): Record<string, string> {
@@ -100,7 +122,7 @@ async function streamProfileQuestion(
   onWord: (word: string) => Promise<void>,
   onMetrics: (metrics: NeuroMetrics) => void,
 ): Promise<boolean> {
-  const res = await fetch(`${API_BASE}/profile-questionnaire`, {
+  const res = await fetch(apiUrl('/profile-questionnaire'), {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -184,11 +206,15 @@ function App() {
     useState<NeuroMetrics['processing_style']>('standard');
   const [mtCoachTone, setMtCoachTone] = useState<NeuroMetrics['coach_tone']>('reassuring');
   const [mtResult, setMtResult] = useState<MicrotasksOutput | null>(null);
+  const [mtRawResponse, setMtRawResponse] = useState<MicrotasksApiResponse | null>(null);
   const [mtLoading, setMtLoading] = useState(false);
   const [mtError, setMtError] = useState<string | null>(null);
   const [mtFileName, setMtFileName] = useState<string | null>(null);
   const [mtFileBase64, setMtFileBase64] = useState<string | null>(null);
   const [mtFileMime, setMtFileMime] = useState<string>('application/pdf');
+
+  const hasMicrotasks =
+    !!mtResult && Array.isArray(mtResult.microtasks) && mtResult.microtasks.length > 0;
 
   const lastAssistantQuestionRef = useRef<string>('');
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -423,7 +449,7 @@ function App() {
         coach_tone: mtCoachTone,
       };
 
-      const res = await fetch(`${API_BASE}/course-plan/single-assignment`, {
+      const res = await fetch(apiUrl('/course-plan/single-assignment'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -442,7 +468,8 @@ function App() {
         return;
       }
 
-      const data = (await res.json()) as { microtasks_output?: MicrotasksOutput };
+      const data = (await res.json()) as MicrotasksApiResponse;
+      setMtRawResponse(data);
       setMtResult(data.microtasks_output ?? null);
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -462,38 +489,194 @@ function App() {
     mtSupportLevel,
   ]);
 
+  const buildExportBundle = useCallback(() => {
+    const now = new Date();
+    return {
+      exported_at: now.toISOString(),
+      app: {
+        name: 'margati-microtasks-engine',
+        view: 'microtasks-sandbox',
+      },
+      request_context: {
+        api_base_url: API_BASE,
+        course: {
+          id: 'demo-course',
+          name: mtCourseName,
+          code: mtCourseCode,
+        },
+        assignment: {
+          id: 'demo-assignment',
+          name: mtAssignmentName,
+          description_html: mtDescription,
+          attachment: mtFileName
+            ? {
+                filename: mtFileName,
+                mime_type: mtFileMime,
+                base64_present: !!mtFileBase64,
+                base64_size_chars: mtFileBase64 ? mtFileBase64.length : 0,
+              }
+            : null,
+        },
+        dials: {
+          academic_level: 'high_school',
+          support_level: mtSupportLevel,
+          ef_capacity: mtEfCapacity,
+          processing_style: mtProcessingStyle,
+          coach_tone: mtCoachTone,
+        },
+      },
+      response_context: mtRawResponse,
+      microtasks_output: mtResult,
+    };
+  }, [
+    mtAssignmentName,
+    mtCoachTone,
+    mtCourseCode,
+    mtCourseName,
+    mtDescription,
+    mtEfCapacity,
+    mtFileBase64,
+    mtFileMime,
+    mtFileName,
+    mtProcessingStyle,
+    mtRawResponse,
+    mtResult,
+    mtSupportLevel,
+  ]);
+
+  const exportJson = useCallback(() => {
+    const bundle = buildExportBundle();
+    const json = JSON.stringify(bundle, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const safeName = (mtAssignmentName || 'microtasks')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '');
+    a.href = url;
+    a.download = `${safeName || 'microtasks'}-bundle.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, [buildExportBundle, mtAssignmentName]);
+
+  const exportPdf = useCallback(() => {
+    const bundle = buildExportBundle();
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+    const pageWidth = doc.internal.pageSize.getWidth();
+
+    const title = 'Margati Microtasks Export';
+    doc.setFontSize(16);
+    doc.text(title, 40, 48);
+
+    doc.setFontSize(10);
+    doc.setTextColor(80);
+    doc.text(`Exported: ${bundle.exported_at}`, 40, 66);
+    doc.text(`Course: ${bundle.request_context.course.name} (${bundle.request_context.course.code})`, 40, 82);
+    doc.text(`Assignment: ${bundle.request_context.assignment.name}`, 40, 98);
+
+    const dials = bundle.request_context.dials;
+    doc.text(
+      `Dials: academic_level=${dials.academic_level} · support_level=${dials.support_level} · ef=${dials.ef_capacity} · processing=${dials.processing_style} · tone=${dials.coach_tone}`,
+      40,
+      114,
+      { maxWidth: pageWidth - 80 },
+    );
+
+    const tasks = (bundle.microtasks_output?.microtasks ?? []).map((t) => [
+      String(t.sequence_id),
+      t.work_phase,
+      t.title,
+      `${t.estimated_minutes}m`,
+      `${Number.isFinite(t.weight_percentage) ? t.weight_percentage.toFixed(1) : t.weight_percentage}%`,
+    ]);
+
+    autoTable(doc, {
+      head: [['#', 'Phase', 'Title', 'Time', 'Weight']],
+      body: tasks,
+      startY: 134,
+      styles: { fontSize: 9, cellPadding: 6, overflow: 'linebreak' },
+      headStyles: { fillColor: [238, 242, 255], textColor: [17, 24, 39] },
+      columnStyles: {
+        0: { cellWidth: 28 },
+        1: { cellWidth: 86 },
+        3: { cellWidth: 48 },
+        4: { cellWidth: 56 },
+      },
+    });
+
+    const lastY = (doc as any).lastAutoTable?.finalY ?? 134;
+    const reasoning = bundle.microtasks_output?.uac_metadata?.pedagogical_reasoning;
+    if (reasoning && typeof reasoning === 'string' && reasoning.trim()) {
+      doc.setFontSize(11);
+      doc.setTextColor(17);
+      doc.text('Pedagogical reasoning', 40, lastY + 26);
+      doc.setFontSize(9);
+      doc.setTextColor(80);
+      doc.text(reasoning.trim(), 40, lastY + 42, { maxWidth: pageWidth - 80 });
+    }
+
+    const safeName = (mtAssignmentName || 'microtasks')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/(^-|-$)/g, '');
+    doc.save(`${safeName || 'microtasks'}-microtasks.pdf`);
+  }, [buildExportBundle, mtAssignmentName]);
+
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 flex justify-center px-4 py-8">
       <div className="w-full max-w-5xl bg-white border border-slate-200 rounded-2xl shadow-lg flex flex-col overflow-hidden">
-        <header className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+        <header className="px-5 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
           <div>
             <h1 className="text-lg font-semibold tracking-tight text-slate-900">
               Neuro Inclusive Calibration Engine
             </h1>
           </div>
-          <div className="inline-flex items-center rounded-full bg-slate-100 p-1 text-xs font-medium">
-            <button
-              type="button"
-              onClick={() => setActiveTab('calibration')}
-              className={`px-3 py-1.5 rounded-full ${
-                activeTab === 'calibration'
-                  ? 'bg-white text-slate-900 shadow-sm border border-slate-200'
-                  : 'text-slate-500'
-              }`}
-            >
-              Calibration Q&A
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('microtasks')}
-              className={`px-3 py-1.5 rounded-full ${
-                activeTab === 'microtasks'
-                  ? 'bg-white text-slate-900 shadow-sm border border-slate-200'
-                  : 'text-slate-500'
-              }`}
-            >
-              Microtasks Sandbox
-            </button>
+          <div className="flex items-center gap-2">
+            {activeTab === 'microtasks' && hasMicrotasks && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={exportJson}
+                  className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                >
+                  Export JSON
+                </button>
+                <button
+                  type="button"
+                  onClick={exportPdf}
+                  className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm hover:bg-slate-50"
+                >
+                  Export PDF
+                </button>
+              </div>
+            )}
+            <div className="inline-flex items-center rounded-full bg-slate-100 p-1 text-xs font-medium">
+              <button
+                type="button"
+                onClick={() => setActiveTab('calibration')}
+                className={`px-3 py-1.5 rounded-full ${
+                  activeTab === 'calibration'
+                    ? 'bg-white text-slate-900 shadow-sm border border-slate-200'
+                    : 'text-slate-500'
+                }`}
+              >
+                Calibration Q&A
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('microtasks')}
+                className={`px-3 py-1.5 rounded-full ${
+                  activeTab === 'microtasks'
+                    ? 'bg-white text-slate-900 shadow-sm border border-slate-200'
+                    : 'text-slate-500'
+                }`}
+              >
+                Microtasks Sandbox
+              </button>
+            </div>
           </div>
         </header>
 
@@ -620,16 +803,34 @@ function App() {
                   </label>
                 </div>
 
-                <label className="flex flex-col gap-1 text-xs">
-                  <span className="text-slate-500">Assignment description</span>
-                  <textarea
-                    rows={7}
-                    value={mtDescription}
-                    onChange={(e) => setMtDescription(e.target.value)}
-                    className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30 resize-y leading-relaxed"
-                    placeholder="Paste the assignment prompt or instructions here…"
-                  />
-                </label>
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-500 text-xs">Assignment description</span>
+                    <span className="text-[0.7rem] text-slate-400">
+                      Rich text (HTML is sent to backend)
+                    </span>
+                  </div>
+
+                  <div className="rounded-md border border-slate-300 bg-white overflow-hidden">
+                    <ReactQuill
+                      theme="snow"
+                      value={mtDescription}
+                      onChange={setMtDescription}
+                      placeholder="Paste the assignment prompt or instructions here…"
+                      modules={{
+                        toolbar: [
+                          ['bold', 'italic', 'underline'],
+                          [{ list: 'ordered' }, { list: 'bullet' }],
+                          ['link'],
+                          ['clean'],
+                        ],
+                      }}
+                      className="microtasks-quill"
+                    />
+                  </div>
+
+                  {/* no preview – we send HTML directly to backend */}
+                </div>
 
                 <div className="flex items-center justify-between gap-2 text-[0.7rem] pt-1">
                   <label className="flex items-center gap-2">
