@@ -82,7 +82,7 @@ type MicrotasksApiResponse = {
   microtasks_output?: MicrotasksOutput;
 };
 
-const DEFAULT_SUPPORT_LEVEL = "HIGH" as const;
+const DEFAULT_SUPPORT_LEVEL = "LOW" as const;
 
 function authHeader(): Record<string, string> {
   const token = (import.meta as any).env?.AI_SERVER_API_KEY_AUTH as
@@ -214,6 +214,8 @@ function App() {
   const [mtCourseName, setMtCourseName] = useState("Demo Course");
   const [mtCourseCode, setMtCourseCode] = useState("DEMO 101");
   const [mtDescription, setMtDescription] = useState("");
+  const [mtSupportLevel, setMtSupportLevel] =
+    useState<"HIGH" | "LOW">(DEFAULT_SUPPORT_LEVEL);
   const [mtEfCapacity, setMtEfCapacity] =
     useState<NeuroMetrics["ef_capacity"]>("moderate");
   const [mtProcessingStyle, setMtProcessingStyle] =
@@ -504,7 +506,7 @@ function App() {
                 },
               ]
             : null,
-        support_level: DEFAULT_SUPPORT_LEVEL,
+        support_level: mtSupportLevel,
         academic_level: "high_school",
         ef_capacity: mtEfCapacity,
         processing_style: mtProcessingStyle,
@@ -593,7 +595,7 @@ function App() {
         },
         dials: {
           academic_level: "high_school",
-          support_level: DEFAULT_SUPPORT_LEVEL,
+          support_level: mtSupportLevel,
           ef_capacity: mtEfCapacity,
           processing_style: mtProcessingStyle,
           coach_tone: mtCoachTone,
@@ -613,6 +615,7 @@ function App() {
     mtFileMime,
     mtFileName,
     mtProcessingStyle,
+    mtSupportLevel,
     mtRawResponse,
     mtResult,
   ]);
@@ -1028,11 +1031,16 @@ function App() {
                 <label className="flex flex-col gap-1">
                   <span className="text-slate-500">Support level</span>
                   <select
-                    value={DEFAULT_SUPPORT_LEVEL}
-                    disabled
+                    value={mtSupportLevel}
+                    onChange={(e) =>
+                      setMtSupportLevel(
+                        e.target.value === "HIGH" ? "HIGH" : "LOW",
+                      )
+                    }
                     className="rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500/30"
                   >
-                    <option value="HIGH">HIGH – more scaffolding (default)</option>
+                    <option value="LOW">LOW – fewer, larger chunks (default)</option>
+                    <option value="HIGH">HIGH – more scaffolding</option>
                   </select>
                 </label>
               </div>
