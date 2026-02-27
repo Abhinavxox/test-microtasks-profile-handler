@@ -1,0 +1,43 @@
+### Node / package managers
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+### Build outputs
+dist/
+build/
+out/
+.next/
+.nuxt/
+.svelte-kit/
+
+### Vite / tooling caches
+.vite/
+.cache/
+.turbo/
+.parcel-cache/
+
+### Env files (keep secrets out of git)
+.env
+.env.*
+!.env.example
+
+### TypeScript
+*.tsbuildinfo
+
+### Testing / coverage
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+### OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+### Misc
+*.log
