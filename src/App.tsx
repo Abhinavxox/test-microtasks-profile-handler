@@ -18,9 +18,11 @@ type ChatMessage = {
   content: string;
 };
 
-const API_BASE =
-  ((import.meta as any).env?.VITE_AI_BASE_URL as string | undefined)?.replace(/\/+$/, '') ||
-  'http://127.0.0.1:8000';
+const rawApiBase =
+  ((import.meta as any).env?.VITE_AI_BASE_URL as string | undefined) ||
+  ((import.meta as any).env?.AI_BASE_URL as string | undefined);
+
+const API_BASE = (rawApiBase ? rawApiBase.replace(/\/+$/, '') : 'http://127.0.0.1:8000');
 
 function apiUrl(path: string): string {
   const p = path.startsWith('/') ? path : `/${path}`;
@@ -50,6 +52,13 @@ type MicrotaskItem = {
   estimated_minutes: number;
   weight_percentage: number;
   concepts?: string[];
+  source_pointer?: string;
+  rationale?: string;
+  scaffold_tip?: string;
+  hierarchy?: {
+    type?: string;
+    requires?: number[];
+  };
   decomposed_details?: MicrotaskDetail[];
 };
 
@@ -74,7 +83,9 @@ type MicrotasksApiResponse = {
 };
 
 function authHeader(): Record<string, string> {
-  const token = (import.meta as any).env?.VITE_AI_SERVER_API_KEY_AUTH as string | undefined;
+  const token =
+    ((import.meta as any).env?.VITE_AI_SERVER_API_KEY_AUTH as string | undefined) ||
+    ((import.meta as any).env?.AI_SERVER_API_KEY_AUTH as string | undefined);
   if (!token) return {};
   return { Authorization: `Bearer ${token}` };
 }
@@ -185,7 +196,9 @@ async function streamProfileQuestion(
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<'calibration' | 'microtasks'>('calibration');
+  const [activeTab, setActiveTab] = useState<'calibration' | 'microtasks' | 'preview'>(
+    'calibration',
+  );
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [currentInput, setCurrentInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -215,6 +228,7 @@ function App() {
 
   const hasMicrotasks =
     !!mtResult && Array.isArray(mtResult.microtasks) && mtResult.microtasks.length > 0;
+  const [expandedTasks, setExpandedTasks] = useState<Record<number, boolean>>({});
 
   const lastAssistantQuestionRef = useRef<string>('');
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -470,7 +484,12 @@ function App() {
 
       const data = (await res.json()) as MicrotasksApiResponse;
       setMtRawResponse(data);
-      setMtResult(data.microtasks_output ?? null);
+      const result = data.microtasks_output ?? null;
+      setMtResult(result);
+      if (result && Array.isArray(result.microtasks) && result.microtasks.length > 0) {
+        setExpandedTasks({});
+        setActiveTab('preview');
+      }
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error(err);
@@ -635,7 +654,7 @@ function App() {
             </h1>
           </div>
           <div className="flex items-center gap-2">
-            {activeTab === 'microtasks' && hasMicrotasks && (
+            {activeTab === 'preview' && hasMicrotasks && (
               <div className="flex items-center gap-2">
                 <button
                   type="button"
@@ -675,6 +694,20 @@ function App() {
                 }`}
               >
                 Microtasks Sandbox
+              </button>
+              <button
+                type="button"
+                onClick={() => hasMicrotasks && setActiveTab('preview')}
+                className={`px-3 py-1.5 rounded-full ${
+                  activeTab === 'preview'
+                    ? 'bg-white text-slate-900 shadow-sm border border-slate-200'
+                    : hasMicrotasks
+                      ? 'text-slate-500'
+                      : 'text-slate-300 cursor-not-allowed opacity-50'
+                }`}
+                disabled={!hasMicrotasks}
+              >
+                Microtasks Preview
               </button>
             </div>
           </div>
@@ -757,10 +790,9 @@ function App() {
           )}
 
           {activeTab === 'microtasks' && (
-            <div className="grid gap-4 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1.3fr)]">
-              <div className="space-y-3">
-                <h2 className="text-sm font-semibold text-slate-900">Assignment + Dials</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+            <div className="max-w-2xl space-y-3">
+              <h2 className="text-sm font-semibold text-slate-900">Assignment + Dials</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
                   <label className="flex flex-col gap-1">
                     <span className="text-slate-500">Course name</span>
                     <input
@@ -927,87 +959,136 @@ function App() {
                   </button>
                 </div>
 
-                {mtError && (
-                  <p className="pt-1 text-xs text-rose-600 whitespace-pre-line">{mtError}</p>
-                )}
-              </div>
+              {mtError && (
+                <p className="pt-1 text-xs text-rose-600 whitespace-pre-line">{mtError}</p>
+              )}
+            </div>
+          )}
 
-              <div className="space-y-3">
-                <h2 className="text-sm font-semibold text-slate-900">Microtasks preview</h2>
-                {!mtResult && !mtLoading && (
-                  <p className="text-xs text-slate-400">
-                    You&apos;ll see a structured list of microtasks here after generation.
-                  </p>
-                )}
-                {mtLoading && (
-                  <p className="text-xs text-slate-500">Talking to the microtask engine…</p>
-                )}
-                {mtResult && Array.isArray(mtResult.microtasks) && mtResult.microtasks.length > 0 && (
-                  <div className="space-y-4 text-xs">
-                    {mtResult.uac_metadata?.total_estimated_minutes != null && (
-                      <p className="text-slate-500">
-                        Total estimated time:{' '}
-                        <span className="font-medium text-slate-900">
-                          {mtResult.uac_metadata.total_estimated_minutes} mins
-                        </span>
-                      </p>
-                    )}
+          {activeTab === 'preview' && (
+            <div className="space-y-3">
+              <h2 className="text-sm font-semibold text-slate-900">Microtasks preview</h2>
+              {!mtResult && !mtLoading && (
+                <p className="text-xs text-slate-400">
+                  Generate microtasks in the sandbox tab to see them here.
+                </p>
+              )}
+              {mtLoading && (
+                <p className="text-xs text-slate-500">Talking to the microtask engine…</p>
+              )}
+              {mtResult && Array.isArray(mtResult.microtasks) && mtResult.microtasks.length > 0 && (
+                <div className="space-y-4 text-xs max-h-[540px] overflow-y-auto pr-1">
+                  {mtResult.uac_metadata?.total_estimated_minutes != null && (
+                    <p className="text-slate-500">
+                      Total estimated time:{' '}
+                      <span className="font-medium text-slate-900">
+                        {mtResult.uac_metadata.total_estimated_minutes} mins
+                      </span>
+                    </p>
+                  )}
 
-                    <div className="space-y-4 max-h-[520px] overflow-y-auto pr-1">
-                      {mtResult.microtasks.map((mt) => (
-                        <div
-                          key={mt.sequence_id}
-                          className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 shadow-sm"
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="space-y-0.5">
-                              <div className="text-[0.65rem] uppercase tracking-wide text-slate-400">
-                                Task {mt.sequence_id}
-                              </div>
-                              <div className="text-[0.8rem] font-semibold text-slate-900">
-                                {mt.title}
-                              </div>
+                  {mtResult.microtasks.map((mt) => {
+                    const expanded = !!expandedTasks[mt.sequence_id];
+                    const requiresCount = mt.hierarchy?.requires
+                      ? mt.hierarchy.requires.length
+                      : 0;
+                    return (
+                      <div
+                        key={mt.sequence_id}
+                        className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 shadow-sm"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-0.5">
+                            <div className="text-[0.65rem] uppercase tracking-wide text-slate-400">
+                              Task {mt.sequence_id}
                             </div>
-                            <div className="flex flex-col items-end gap-1 text-[0.7rem]">
-                              <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[0.65rem] font-medium text-indigo-700 border border-indigo-100">
-                                {mt.work_phase}
-                              </span>
-                              <span className="text-slate-500">
-                                {mt.estimated_minutes} min · {mt.weight_percentage.toFixed(1)}%
-                              </span>
+                            <div className="text-[0.8rem] font-semibold text-slate-900">
+                              {mt.title}
                             </div>
                           </div>
-                          <p className="mt-2 text-xs text-slate-700 leading-relaxed">
-                            {mt.description}
-                          </p>
-                          {mt.concepts && mt.concepts.length > 0 && (
-                            <p className="mt-2 text-[0.7rem] text-slate-500">
-                              <span className="font-medium text-slate-700">Concepts:</span>{' '}
-                              {mt.concepts.join(', ')}
-                            </p>
+                          <div className="flex flex-col items-end gap-1 text-[0.7rem]">
+                            <span className="inline-flex items-center rounded-full bg-indigo-50 px-2 py-0.5 text-[0.65rem] font-medium text-indigo-700 border border-indigo-100">
+                              {mt.work_phase}
+                            </span>
+                            <span className="text-slate-500">
+                              {mt.estimated_minutes} min · {mt.weight_percentage.toFixed(1)}%
+                            </span>
+                          </div>
+                        </div>
+
+                        <p className="mt-2 text-xs text-slate-700 leading-relaxed">
+                          {mt.description}
+                        </p>
+
+                        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[0.7rem] text-slate-500">
+                          {mt.source_pointer && (
+                            <span>
+                              <span className="font-medium text-slate-700">Source:</span>{' '}
+                              {mt.source_pointer}
+                            </span>
                           )}
-                          {mt.decomposed_details && mt.decomposed_details.length > 0 && (
-                            <ul className="mt-2 space-y-1.5">
-                              {mt.decomposed_details.map((d, idx) => (
-                                <li
-                                  key={`${mt.sequence_id}-${idx}`}
-                                  className="flex items-start gap-1.5 text-[0.75rem] text-slate-700 leading-relaxed"
-                                >
-                                  <span className="mt-1 h-1.5 w-1.5 rounded-full bg-slate-400" />
-                                  <span>
-                                    <span className="font-medium">{d.title}.</span>{' '}
-                                    {d.description}
-                                  </span>
-                                </li>
-                              ))}
-                            </ul>
+                          {mt.hierarchy?.type && (
+                            <span>
+                              <span className="font-medium text-slate-700">Hierarchy:</span>{' '}
+                              {mt.hierarchy.type}
+                              {requiresCount > 0 ? ` (requires ${requiresCount})` : ''}
+                            </span>
                           )}
                         </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+
+                        {mt.concepts && mt.concepts.length > 0 && (
+                          <p className="mt-2 text-[0.7rem] text-slate-500">
+                            <span className="font-medium text-slate-700">Concepts:</span>{' '}
+                            {mt.concepts.join(', ')}
+                          </p>
+                        )}
+
+                        {mt.scaffold_tip && (
+                          <p className="mt-1 text-[0.7rem] text-slate-500">
+                            <span className="font-medium text-slate-700">Scaffold tip:</span>{' '}
+                            {mt.scaffold_tip}
+                          </p>
+                        )}
+
+                        {mt.decomposed_details && mt.decomposed_details.length > 0 && (
+                          <div className="mt-2 space-y-1.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedTasks((prev) => ({
+                                  ...prev,
+                                  [mt.sequence_id]: !expanded,
+                                }))
+                              }
+                              className="text-[0.7rem] font-medium text-indigo-700 hover:text-indigo-800"
+                            >
+                              {expanded
+                                ? 'Hide breakdown'
+                                : `Show breakdown (${mt.decomposed_details.length})`}
+                            </button>
+                            {expanded && (
+                              <ul className="space-y-1.5">
+                                {mt.decomposed_details.map((d, idx) => (
+                                  <li
+                                    key={`${mt.sequence_id}-${idx}`}
+                                    className="flex items-start gap-1.5 text-[0.75rem] text-slate-700 leading-relaxed"
+                                  >
+                                    <span className="mt-1 h-1.5 w-1.5 rounded-full bg-slate-400" />
+                                    <span>
+                                      <span className="font-medium">{d.title}.</span>{' '}
+                                      {d.description}
+                                    </span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
         </main>
