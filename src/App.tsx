@@ -915,6 +915,10 @@ function App() {
                   const isAssistant = m.role === "assistant";
                   const isSystem = m.role === "system";
 
+                  if (!m.content || !m.content.trim()) {
+                    return null;
+                  }
+
                   return (
                     <div
                       key={m.id}
@@ -959,6 +963,18 @@ function App() {
                       <span>{opt.label}</span>
                     </button>
                   ))}
+                </div>
+              )}
+
+              {isFinished && metrics && (
+                <div className="mt-6 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={goToMicrotasksWithMetrics}
+                    className="inline-flex items-center justify-center rounded-full bg-slate-900 px-5 py-2.5 text-sm font-medium text-white shadow-sm hover:bg-slate-800 transition-colors"
+                  >
+                    Generate microtasks from this profile
+                  </button>
                 </div>
               )}
             </>
@@ -1332,41 +1348,27 @@ function App() {
 
         <footer className="px-4 py-3 border-t border-slate-200 bg-slate-50">
           {activeTab === "calibration" ? (
-            <div className="space-y-2">
-              <form onSubmit={handleSubmit} className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder={
-                    isFinished
-                      ? "Profile completed – refresh to start again"
-                      : "Type your answer or add your own twist…"
-                  }
-                  value={currentInput}
-                  onChange={(e) => setCurrentInput(e.target.value)}
-                  disabled={isStreaming || isFinished}
-                  className="flex-1 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm placeholder:text-slate-400 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:opacity-60"
-                />
-                <button
-                  type="submit"
-                  disabled={!currentInput.trim() || isStreaming || isFinished}
-                  className="inline-flex items-center justify-center rounded-full bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
-                >
-                  {isStreaming ? "Streaming…" : "Send"}
-                </button>
-              </form>
-
-              {isFinished && metrics && (
-                <div className="flex items-center justify-end">
-                  <button
-                    type="button"
-                    onClick={goToMicrotasksWithMetrics}
-                    className="inline-flex items-center justify-center rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-slate-800 transition-colors"
-                  >
-                    Generate microtasks
-                  </button>
-                </div>
-              )}
-            </div>
+            <form onSubmit={handleSubmit} className="flex gap-2">
+              <input
+                type="text"
+                placeholder={
+                  isFinished
+                    ? "Profile completed – refresh to start again"
+                    : "Type your answer or add your own twist…"
+                }
+                value={currentInput}
+                onChange={(e) => setCurrentInput(e.target.value)}
+                disabled={isStreaming || isFinished}
+                className="flex-1 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm placeholder:text-slate-400 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-500/20 disabled:opacity-60"
+              />
+              <button
+                type="submit"
+                disabled={!currentInput.trim() || isStreaming || isFinished}
+                className="inline-flex items-center justify-center rounded-full bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-indigo-500 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+              >
+                {isStreaming ? "Streaming…" : "Send"}
+              </button>
+            </form>
           ) : (
             <div className="text-[0.7rem] text-slate-400">
               Powered by the Margati microtasks engine · This sandbox uses a
