@@ -3,11 +3,24 @@ import ReactQuill from "react-quill";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-type NeuroMetrics = {
+/** Calibration dials (same shape as profile questionnaire + microtasks API). */
+type CalibrationDials = {
   ef_capacity: "high" | "moderate" | "low";
   processing_style: "standard" | "high_friction" | "literal";
   coach_tone: "challenger" | "reassuring" | "objective";
-  metacognition_style: "planner" | "adjuster" | "anti_planner";
+};
+
+/** UI visual profile from profile questionnaire (for future frontend use). */
+type UIVisualProfile = {
+  requires_tunnel_vision: boolean;
+  requires_dyslexia_font: boolean;
+  requires_sensory_reduction: boolean;
+};
+
+/** Profile questionnaire API result (neuro_metrics_finalized payload). */
+type NeuroProfileResult = {
+  calibration_dials: CalibrationDials;
+  ui_visual_profile?: UIVisualProfile;
 };
 
 type QAContextItem = { question: string; answer: string };
@@ -132,7 +145,7 @@ async function streamProfileQuestion(
   inputText: string,
   context: QAContextItem[],
   onWord: (word: string) => Promise<void>,
-  onMetrics: (metrics: NeuroMetrics) => void,
+  onMetrics: (metrics: NeuroProfileResult) => void,
 ): Promise<boolean> {
   const res = await fetch(apiUrl("/profile-questionnaire"), {
     method: "POST",
@@ -180,7 +193,7 @@ async function streamProfileQuestion(
           await onWord(payload.content as string);
         } else if (type === "neuro_metrics_finalized") {
           finalized = true;
-          onMetrics(payload.result as NeuroMetrics);
+          onMetrics(payload.result as NeuroProfileResult);
           // Once metrics arrive, we can stop processing further events for this turn.
           return true;
         } else if (type === "error") {
@@ -203,7 +216,7 @@ function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [currentInput, setCurrentInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
-  const [metrics, setMetrics] = useState<NeuroMetrics | null>(null);
+  const [metrics, setMetrics] = useState<NeuroProfileResult | null>(null);
   const [context, setContext] = useState<QAContextItem[]>([]);
   const [options, setOptions] = useState<MCQOption[]>([]);
   const [isFinished, setIsFinished] = useState(false);
@@ -217,11 +230,17 @@ function App() {
   const [mtSupportLevel, setMtSupportLevel] =
     useState<"HIGH" | "LOW">(DEFAULT_SUPPORT_LEVEL);
   const [mtEfCapacity, setMtEfCapacity] =
-    useState<NeuroMetrics["ef_capacity"]>("moderate");
+    useState<CalibrationDials["ef_capacity"]>("moderate");
   const [mtProcessingStyle, setMtProcessingStyle] =
-    useState<NeuroMetrics["processing_style"]>("standard");
+    useState<CalibrationDials["processing_style"]>("standard");
   const [mtCoachTone, setMtCoachTone] =
-    useState<NeuroMetrics["coach_tone"]>("reassuring");
+    useState<CalibrationDials["coach_tone"]>("reassuring");
+  const [mtUiVisualProfile, setMtUiVisualProfile] =
+    useState<UIVisualProfile>({
+      requires_tunnel_vision: false,
+      requires_dyslexia_font: false,
+      requires_sensory_reduction: false,
+    });
   const [mtResult, setMtResult] = useState<MicrotasksOutput | null>(null);
   const [mtRawResponse, setMtRawResponse] =
     useState<MicrotasksApiResponse | null>(null);
@@ -335,12 +354,19 @@ function App() {
               {
                 id: `metrics-${Date.now()}`,
                 role: "assistant",
-                content:
-                  `Got it — here’s your calibrated study profile:\n\n` +
-                  `EF Capacity: ${finalMetrics.ef_capacity}\n` +
-                  `Processing Style: ${finalMetrics.processing_style}\n` +
-                  `Coach Tone: ${finalMetrics.coach_tone}\n` +
-                  `Metacognition: ${finalMetrics.metacognition_style}`,
+                content: (() => {
+                  const d = finalMetrics.calibration_dials;
+                  const u = finalMetrics.ui_visual_profile;
+                  const dialSummary =
+                    d != null
+                      ? `EF Capacity: ${d.ef_capacity}\nProcessing Style: ${d.processing_style}\nCoach Tone: ${d.coach_tone}`
+                      : "Calibration: defaults";
+                  const uiSummary =
+                    u != null
+                      ? `\n\nUI: tunnel_vision=${u.requires_tunnel_vision} · dyslexia_font=${u.requires_dyslexia_font} · sensory_reduction=${u.requires_sensory_reduction}`
+                      : "";
+                  return `Got it — here's your calibrated study profile:\n\n${dialSummary}${uiSummary}`;
+                })(),
               },
             ]);
             scrollToBottom();
@@ -421,10 +447,14 @@ function App() {
 
   const goToMicrotasksWithMetrics = useCallback(() => {
     setActiveTab("microtasks");
-    if (metrics) {
-      setMtEfCapacity(metrics.ef_capacity);
-      setMtProcessingStyle(metrics.processing_style);
-      setMtCoachTone(metrics.coach_tone);
+    if (metrics?.calibration_dials) {
+      const d = metrics.calibration_dials;
+      setMtEfCapacity(d.ef_capacity ?? "moderate");
+      setMtProcessingStyle(d.processing_style ?? "standard");
+      setMtCoachTone(d.coach_tone ?? "reassuring");
+      if (metrics.ui_visual_profile) {
+        setMtUiVisualProfile(metrics.ui_visual_profile);
+      }
       setMtToast("Metrics have been pre-fed. Add description or file!");
       window.setTimeout(() => setMtToast(null), 4500);
     } else {
@@ -508,9 +538,12 @@ function App() {
             : null,
         support_level: mtSupportLevel,
         academic_level: "high_school",
-        ef_capacity: mtEfCapacity,
-        processing_style: mtProcessingStyle,
-        coach_tone: mtCoachTone,
+        calibration_dials: {
+          ef_capacity: mtEfCapacity,
+          processing_style: mtProcessingStyle,
+          coach_tone: mtCoachTone,
+        },
+        ui_visual_profile: mtUiVisualProfile,
       };
 
       const res = await fetch(apiUrl("/course-plan/single-assignment"), {
@@ -563,6 +596,7 @@ function App() {
     mtFileMime,
     mtFileName,
     mtProcessingStyle,
+    mtUiVisualProfile,
   ]);
 
   const buildExportBundle = useCallback(() => {
@@ -596,9 +630,12 @@ function App() {
         dials: {
           academic_level: "high_school",
           support_level: mtSupportLevel,
-          ef_capacity: mtEfCapacity,
-          processing_style: mtProcessingStyle,
-          coach_tone: mtCoachTone,
+          calibration_dials: {
+            ef_capacity: mtEfCapacity,
+            processing_style: mtProcessingStyle,
+            coach_tone: mtCoachTone,
+          },
+          ui_visual_profile: mtUiVisualProfile,
         },
       },
       response_context: mtRawResponse,
@@ -616,6 +653,7 @@ function App() {
     mtFileName,
     mtProcessingStyle,
     mtSupportLevel,
+    mtUiVisualProfile,
     mtRawResponse,
     mtResult,
   ]);
@@ -665,8 +703,9 @@ function App() {
     );
 
     const dials = bundle.request_context.dials;
+    const cd = dials.calibration_dials ?? {};
     doc.text(
-      `Dials: academic_level=${dials.academic_level} · support_level=${dials.support_level} · ef=${dials.ef_capacity} · processing=${dials.processing_style} · tone=${dials.coach_tone}`,
+      `Dials: academic_level=${dials.academic_level} · support_level=${dials.support_level} · ef=${cd.ef_capacity ?? "moderate"} · processing=${cd.processing_style ?? "standard"} · tone=${cd.coach_tone ?? "reassuring"}`,
       marginX,
       marginTop + 66,
       { maxWidth: pageWidth - marginX * 2 },
@@ -1120,7 +1159,7 @@ function App() {
                     value={mtEfCapacity}
                     onChange={(e) =>
                       setMtEfCapacity(
-                        (e.target.value as NeuroMetrics["ef_capacity"]) ||
+                        (e.target.value as CalibrationDials["ef_capacity"]) ||
                           "moderate",
                       )
                     }
@@ -1137,7 +1176,7 @@ function App() {
                     value={mtProcessingStyle}
                     onChange={(e) =>
                       setMtProcessingStyle(
-                        (e.target.value as NeuroMetrics["processing_style"]) ||
+                        (e.target.value as CalibrationDials["processing_style"]) ||
                           "standard",
                       )
                     }
@@ -1154,7 +1193,7 @@ function App() {
                     value={mtCoachTone}
                     onChange={(e) =>
                       setMtCoachTone(
-                        (e.target.value as NeuroMetrics["coach_tone"]) ||
+                        (e.target.value as CalibrationDials["coach_tone"]) ||
                           "reassuring",
                       )
                     }
@@ -1164,6 +1203,53 @@ function App() {
                     <option value="reassuring">reassuring</option>
                     <option value="objective">objective</option>
                   </select>
+                </label>
+              </div>
+              <p className="text-xs text-slate-500 mt-1.5 mb-1">
+                UI visual profile (from calibration or override)
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={mtUiVisualProfile.requires_tunnel_vision}
+                    onChange={(e) =>
+                      setMtUiVisualProfile((prev) => ({
+                        ...prev,
+                        requires_tunnel_vision: e.target.checked,
+                      }))
+                    }
+                    className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500/30"
+                  />
+                  <span className="text-slate-600">One step at a time (tunnel)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={mtUiVisualProfile.requires_dyslexia_font}
+                    onChange={(e) =>
+                      setMtUiVisualProfile((prev) => ({
+                        ...prev,
+                        requires_dyslexia_font: e.target.checked,
+                      }))
+                    }
+                    className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500/30"
+                  />
+                  <span className="text-slate-600">Wide spacing / bold keywords</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={mtUiVisualProfile.requires_sensory_reduction}
+                    onChange={(e) =>
+                      setMtUiVisualProfile((prev) => ({
+                        ...prev,
+                        requires_sensory_reduction: e.target.checked,
+                      }))
+                    }
+                    className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500/30"
+                  />
+                  <span className="text-slate-600">Reduce motion / clutter</span>
                 </label>
               </div>
 
