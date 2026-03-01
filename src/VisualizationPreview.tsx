@@ -238,6 +238,7 @@ export function VisualizationPreview() {
   const [completed, setCompleted] = useState(false);
   const [expandedTasks, setExpandedTasks] = useState<Record<number, boolean>>({});
   const [textExample, setTextExample] = useState<keyof typeof CALIBRATION_TEXT_EXAMPLES>("standard");
+  const [dyslexiaFontChoice, setDyslexiaFontChoice] = useState<"current" | "opendyslexic">("current");
 
   const dummyTasks = getDummyMicrotasks(textExample);
   const activeTask = dummyTasks[activeTaskIndex];
@@ -266,7 +267,10 @@ export function VisualizationPreview() {
 
   const previewTypographyStyle: React.CSSProperties = profile.requires_dyslexia_font
     ? {
-        fontFamily: "'Lexend', 'Comic Sans MS', sans-serif",
+        fontFamily:
+          dyslexiaFontChoice === "opendyslexic"
+            ? "'OpenDyslexicRegular', sans-serif"
+            : "'Lexend', 'Comic Sans MS', sans-serif",
         lineHeight: 1.8,
         letterSpacing: "0.02em",
       }
@@ -313,6 +317,18 @@ export function VisualizationPreview() {
               Dyslexia-friendly (font, spacing, contrast, max-width)
             </span>
           </label>
+          {profile.requires_dyslexia_font && (
+            <select
+              value={dyslexiaFontChoice}
+              onChange={(e) =>
+                setDyslexiaFontChoice(e.target.value as "current" | "opendyslexic")
+              }
+              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
+            >
+              <option value="current">Current (Lexend)</option>
+              <option value="opendyslexic">OpenDyslexic</option>
+            </select>
+          )}
           <label className="flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"
