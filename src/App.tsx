@@ -2,6 +2,7 @@ import React, { useCallback, useRef, useState } from "react";
 import ReactQuill from "react-quill";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import { VisualizationPreview, renderTextWithBold } from "./VisualizationPreview";
 
 /** Calibration dials (same shape as profile questionnaire + microtasks API). */
 type CalibrationDials = {
@@ -211,7 +212,7 @@ async function streamProfileQuestion(
 
 function App() {
   const [activeTab, setActiveTab] = useState<
-    "calibration" | "microtasks" | "preview"
+    "calibration" | "microtasks" | "preview" | "visualization"
   >("calibration");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [currentInput, setCurrentInput] = useState("");
@@ -923,6 +924,17 @@ function App() {
             >
               Microtasks Preview
             </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("visualization")}
+              className={`px-3 py-1.5 rounded-full ${
+                activeTab === "visualization"
+                  ? "bg-white text-slate-900 shadow-sm border border-slate-200"
+                  : "text-slate-500"
+              }`}
+            >
+              Visualization Preview
+            </button>
           </div>
         </header>
 
@@ -1272,6 +1284,10 @@ function App() {
             </div>
           )}
 
+          {activeTab === "visualization" && (
+            <VisualizationPreview />
+          )}
+
           {activeTab === "preview" && (
             <div className="space-y-3">
               <div className="flex items-center justify-between gap-2">
@@ -1336,7 +1352,7 @@ function App() {
                                 Task {mt.sequence_id}
                               </div>
                               <div className="text-[0.8rem] font-semibold text-slate-900">
-                                {mt.title}
+                                {renderTextWithBold(mt.title)}
                               </div>
                             </div>
                             <div className="flex flex-col items-end gap-1 text-[0.7rem]">
@@ -1351,7 +1367,7 @@ function App() {
                           </div>
 
                           <p className="mt-2 text-xs text-slate-700 leading-relaxed">
-                            {mt.description}
+                            {renderTextWithBold(mt.description)}
                           </p>
 
                           <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[0.7rem] text-slate-500">
