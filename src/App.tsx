@@ -108,9 +108,15 @@ function authHeader(): Record<string, string> {
 
 function parseQuestionAndOptions(raw: string): ParsedQuestion {
   const options: MCQOption[] = [];
+  const trimLabel = (s: string) =>
+    s
+      .replace(/^[-*]\s*/, "")
+      .replace(/^\*\*|\*\*$/g, "")
+      .replace(/^[_*]+|[_*]+$/g, "")
+      .trim();
 
-  // Try to split question from options by locating the first "A." / "A)" marker
-  const firstOptMatch = raw.match(/\bA[.)]\s/);
+  // Find first option marker: A. / A) / B. / B) / C. / C)
+  const firstOptMatch = raw.match(/\b([A-C])[.)]\s/);
   let questionText = raw.trim();
   let optionsText = "";
 
@@ -120,23 +126,44 @@ function parseQuestionAndOptions(raw: string): ParsedQuestion {
     optionsText = raw.slice(idx).trim();
   }
 
-  // Fallback: if we did not clearly separate, still try to parse options over the full text
   if (!optionsText) {
     optionsText = raw.trim();
   }
 
-  // Match "A. <label> B. <label> C. <label>" even when inline.
-  const optionRegex = /([A-C])[.)]\s*([\s\S]*?)(?=(?:\s+[A-C][.)]\s)|$)/g;
-
+  // Match "X. <label>" for X = A, B, C (allow newlines and flexible spacing)
+  const optionRegex = /([A-C])[.)]\s*([\s\S]*?)(?=\s+[A-C][.)]\s|$)/g;
   let match: RegExpExecArray | null;
   // eslint-disable-next-line no-cond-assign
   while ((match = optionRegex.exec(optionsText)) !== null) {
     const key = match[1] as "A" | "B" | "C";
-    let label = match[2].trim();
-    // Strip bullets and basic markdown emphasis
-    label = label.replace(/^[-*]\s*/, "");
-    label = label.replace(/^\*\*|\*\*$/g, "").replace(/^[_*]+|[_*]+$/g, "");
-    options.push({ key, label });
+    const label = trimLabel(match[2]);
+    if (label) options.push({ key, label });
+  }
+
+  // If we only got B and C (LLM omitted "A." before first option), treat text before "B." as option A
+  if (
+    options.length === 2 &&
+    options[0].key === "B" &&
+    options[1].key === "C"
+  ) {
+    const bIndex = raw.search(/\bB[.)]\s/);
+    if (bIndex >= 0) {
+      const beforeB = raw.slice(0, bIndex).trim();
+      const lastQuestionEnd = Math.max(
+        beforeB.lastIndexOf("?"),
+        beforeB.lastIndexOf(":"),
+        beforeB.lastIndexOf("."),
+      );
+      const possibleA =
+        lastQuestionEnd >= 0
+          ? beforeB.slice(lastQuestionEnd + 1).trim()
+          : beforeB;
+      if (possibleA.length > 5 && possibleA.length < 200) {
+        options.unshift({ key: "A", label: trimLabel(possibleA) });
+        if (lastQuestionEnd >= 0)
+          questionText = beforeB.slice(0, lastQuestionEnd + 1).trim();
+      }
+    }
   }
 
   return { question: questionText, options };
@@ -1002,21 +1029,33 @@ function App() {
               </div>
 
               {options.length > 0 && (
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {options.map((opt) => (
+                <div className="mt-4 space-y-2">
+                  <div className="flex flex-wrap gap-2">
+                    {options.map((opt) => (
+                      <button
+                        key={opt.key}
+                        type="button"
+                        onClick={() => handleOptionClick(opt)}
+                        disabled={isStreaming}
+                        className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs md:text-sm font-medium text-slate-800 hover:bg-slate-100 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[0.65rem]">
+                          {opt.key}
+                        </span>
+                        <span>{opt.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {!isFinished && (
                     <button
-                      key={opt.key}
                       type="button"
-                      onClick={() => handleOptionClick(opt)}
+                      onClick={() => sendMessage("Skip this question")}
                       disabled={isStreaming}
-                      className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-slate-50 px-3 py-1.5 text-xs md:text-sm font-medium text-slate-800 hover:bg-slate-100 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                      className="text-xs text-slate-500 hover:text-slate-700 disabled:opacity-60 disabled:cursor-not-allowed"
                     >
-                      <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-200 text-[0.65rem]">
-                        {opt.key}
-                      </span>
-                      <span>{opt.label}</span>
+                      Skip this question
                     </button>
-                  ))}
+                  )}
                 </div>
               )}
 
